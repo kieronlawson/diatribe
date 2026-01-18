@@ -120,12 +120,12 @@ impl<'a> HumanTranscript<'a> {
             let start_time = format_timestamp(turn.start_ms);
             output.push_str(&format!("[{}] Speaker {}:\n", start_time, turn.speaker));
 
-            // Collect words for this turn
+            // Collect words for this turn, preferring punctuated words when available
             let words: Vec<&str> = turn
                 .token_indices
                 .iter()
                 .filter_map(|&i| self.transcript.tokens.get(i))
-                .map(|t| t.word.as_str())
+                .map(|t| t.punctuated_word.as_deref().unwrap_or(&t.word))
                 .collect();
 
             // Join words with spaces, wrapping at ~80 characters

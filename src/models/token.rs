@@ -9,6 +9,8 @@ pub struct Token {
     pub token_id: String,
     /// The word text - immutable, never changed by the pipeline
     pub word: String,
+    /// Punctuated/capitalized word (from Deepgram, if available)
+    pub punctuated_word: Option<String>,
     /// Start timestamp in milliseconds
     pub start_ms: u64,
     /// End timestamp in milliseconds
@@ -35,6 +37,7 @@ impl Token {
         Self {
             token_id: uuid::Uuid::new_v4().to_string(),
             word: word.word.clone(),
+            punctuated_word: word.punctuated_word.clone(),
             start_ms: (word.start * 1000.0) as u64,
             end_ms: (word.end * 1000.0) as u64,
             speaker: word.speaker,
