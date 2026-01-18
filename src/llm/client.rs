@@ -9,7 +9,7 @@ use crate::models::WindowPatch;
 pub struct AnthropicConfig {
     /// API key (from ANTHROPIC_API_KEY env var)
     pub api_key: String,
-    /// Model to use (e.g., "claude-sonnet-4-20250514")
+    /// Model to use (e.g., "claude-haiku-4-5-20250514")
     pub model: String,
     /// Temperature (0-1, lower = more deterministic)
     pub temperature: f64,
@@ -25,7 +25,7 @@ impl AnthropicConfig {
 
         Ok(Self {
             api_key,
-            model: "claude-sonnet-4-20250514".to_string(),
+            model: "claude-haiku-4-5-20250514".to_string(),
             temperature: 0.1,
             max_tokens: 4096,
         })
