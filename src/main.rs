@@ -203,6 +203,14 @@ async fn process_transcript(
             stage1_result.patches.len(),
             stage1_result.validation_failures
         );
+        info!(
+            "API usage: {} input tokens, {} output tokens",
+            stage1_result.usage.input_tokens,
+            stage1_result.usage.output_tokens
+        );
+        let cost = (stage1_result.usage.input_tokens as f64 * 1.0 / 1_000_000.0)
+            + (stage1_result.usage.output_tokens as f64 * 5.0 / 1_000_000.0);
+        info!("Estimated cost: ${:.4}", cost);
 
         windows_processed = stage1_result.windows_processed;
 

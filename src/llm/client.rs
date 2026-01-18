@@ -106,7 +106,7 @@ impl AnthropicClient {
     }
 
     /// Send a message with tool use for structured output
-    pub async fn send_with_tool(&self, system: &str, user: &str) -> Result<WindowPatch> {
+    pub async fn send_with_tool(&self, system: &str, user: &str) -> Result<(WindowPatch, Usage)> {
         let tool = Tool {
             name: "submit_patch".to_string(),
             description: "Submit the window patch with token relabels and turn edits".to_string(),
@@ -214,7 +214,7 @@ impl AnthropicClient {
                 if let Some(input) = &content.input {
                     let patch: WindowPatch = serde_json::from_value(input.clone())
                         .context("Failed to parse tool input as WindowPatch")?;
-                    return Ok(patch);
+                    return Ok((patch, response.usage));
                 }
             }
         }
@@ -268,9 +268,25 @@ struct ToolChoice {
     name: String,
 }
 
+/// Token usage from API response
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Usage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+impl Usage {
+    pub fn add(&mut self, other: &Usage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
     content: Vec<ContentBlock>,
+    #[serde(default)]
+    usage: Usage,
 }
 
 #[derive(Debug, Deserialize)]

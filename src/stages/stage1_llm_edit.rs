@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::{info, warn};
 
 use crate::llm::{
-    build_window_prompt, validate_patch, AnthropicClient, ValidationConfig, SYSTEM_PROMPT,
+    build_window_prompt, validate_patch, AnthropicClient, Usage, ValidationConfig, SYSTEM_PROMPT,
 };
 use crate::models::{TokenizedTranscript, Window, WindowPatch, WindowSet};
 
@@ -38,6 +38,8 @@ pub struct Stage1Result {
     pub windows_skipped: usize,
     /// Number of validation failures
     pub validation_failures: usize,
+    /// Total API token usage
+    pub usage: Usage,
 }
 
 /// Execute Stage 1: LLM relabeling
@@ -55,6 +57,7 @@ pub async fn execute_stage1(
 ) -> Result<Stage1Result> {
     let mut patches = Vec::new();
     let mut validation_failures = 0;
+    let mut total_usage = Usage::default();
 
     let problem_windows: Vec<&Window> = windows.problem_windows().collect();
     let problem_window_count = problem_windows.len();
@@ -67,7 +70,7 @@ pub async fn execute_stage1(
     );
 
     for window in problem_windows {
-        match process_window(client, transcript, window, config).await {
+        match process_window(client, transcript, window, config, &mut total_usage).await {
             Ok(patch) => {
                 if !patch.is_empty() {
                     info!(
@@ -93,6 +96,7 @@ pub async fn execute_stage1(
         windows_skipped,
         patches,
         validation_failures,
+        usage: total_usage,
     })
 }
 
@@ -102,6 +106,7 @@ async fn process_window(
     transcript: &TokenizedTranscript,
     window: &Window,
     config: &Stage1Config,
+    total_usage: &mut Usage,
 ) -> Result<WindowPatch> {
     let prompt = build_window_prompt(transcript, window, config.edit_budget_percent);
 
@@ -116,7 +121,9 @@ async fn process_window(
         }
 
         match client.send_with_tool(SYSTEM_PROMPT, &prompt).await {
-            Ok(patch) => {
+            Ok((patch, usage)) => {
+                total_usage.add(&usage);
+
                 // Validate the patch
                 let validation = validate_patch(&patch, transcript, window, &config.validation);
 
