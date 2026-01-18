@@ -239,7 +239,7 @@ async fn process_transcript(
             .tokens
             .iter()
             .zip(original_speakers.iter())
-            .filter(|(t, &orig)| t.speaker != orig)
+            .filter(|(t, orig)| t.speaker != **orig)
             .count(),
         duration_ms: transcript.duration_ms(),
         windows_processed,
@@ -265,7 +265,7 @@ async fn process_transcript(
         .tokens
         .iter()
         .zip(original_speakers.iter())
-        .filter(|(t, &orig)| t.speaker != orig)
+        .filter(|(t, orig)| t.speaker != **orig)
         .count();
     let relabel_pct = if !transcript.tokens.is_empty() {
         relabeled as f64 / transcript.tokens.len() as f64 * 100.0

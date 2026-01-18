@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use super::Token;
 
 /// Configuration for window generation
 #[derive(Debug, Clone)]

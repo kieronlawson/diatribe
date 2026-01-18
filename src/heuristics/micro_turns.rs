@@ -77,35 +77,45 @@ pub fn rebuild_turns(transcript: &mut TokenizedTranscript) {
     let mut current_turn_start_index = 0usize;
     let mut current_turn_start_ms = transcript.tokens[0].start_ms;
 
-    for (i, token) in transcript.tokens.iter_mut().enumerate() {
+    // First pass: build turns (read-only access to tokens)
+    for i in 0..transcript.tokens.len() {
+        let token = &transcript.tokens[i];
         if token.speaker != current_speaker {
-            // Close current turn
-            if let Some(last_token) = transcript.tokens.get(i.saturating_sub(1)) {
-                new_turns.push(crate::models::Turn {
-                    turn_id: format!("turn_{}", current_turn_id),
-                    speaker: current_speaker,
-                    start_ms: current_turn_start_ms,
-                    end_ms: last_token.end_ms,
-                    token_indices: (current_turn_start_index..i).collect(),
-                });
-                current_turn_id += 1;
-            }
+            // Close current turn - get end_ms from previous token
+            let prev_end_ms = if i > 0 {
+                transcript.tokens[i - 1].end_ms
+            } else {
+                current_turn_start_ms
+            };
+            new_turns.push(crate::models::Turn {
+                turn_id: format!("turn_{}", current_turn_id),
+                speaker: current_speaker,
+                start_ms: current_turn_start_ms,
+                end_ms: prev_end_ms,
+                token_indices: (current_turn_start_index..i).collect(),
+            });
+            current_turn_id += 1;
             current_speaker = token.speaker;
             current_turn_start_index = i;
             current_turn_start_ms = token.start_ms;
         }
-        token.turn_id = format!("turn_{}", current_turn_id);
     }
 
     // Close final turn
-    if let Some(last_token) = transcript.tokens.last() {
-        new_turns.push(crate::models::Turn {
-            turn_id: format!("turn_{}", current_turn_id),
-            speaker: current_speaker,
-            start_ms: current_turn_start_ms,
-            end_ms: last_token.end_ms,
-            token_indices: (current_turn_start_index..transcript.tokens.len()).collect(),
-        });
+    let last_end_ms = transcript.tokens.last().map(|t| t.end_ms).unwrap_or(0);
+    new_turns.push(crate::models::Turn {
+        turn_id: format!("turn_{}", current_turn_id),
+        speaker: current_speaker,
+        start_ms: current_turn_start_ms,
+        end_ms: last_end_ms,
+        token_indices: (current_turn_start_index..transcript.tokens.len()).collect(),
+    });
+
+    // Second pass: update turn_ids on tokens
+    for turn in &new_turns {
+        for &idx in &turn.token_indices {
+            transcript.tokens[idx].turn_id = turn.turn_id.clone();
+        }
     }
 
     transcript.turns = new_turns;

@@ -49,9 +49,9 @@ impl FloorState {
     pub fn floor_holder(&self, min_score: f64) -> Option<u32> {
         self.scores
             .iter()
-            .filter(|(_, &score)| score >= min_score)
+            .filter(|(_, score)| **score >= min_score)
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(&speaker, _)| speaker)
+            .map(|(speaker, _)| *speaker)
     }
 
     /// Get score for a specific speaker

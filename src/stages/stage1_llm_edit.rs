@@ -57,11 +57,12 @@ pub async fn execute_stage1(
     let mut validation_failures = 0;
 
     let problem_windows: Vec<&Window> = windows.problem_windows().collect();
-    let windows_skipped = windows.total_windows() - problem_windows.len();
+    let problem_window_count = problem_windows.len();
+    let windows_skipped = windows.total_windows() - problem_window_count;
 
     info!(
         "Stage 1: Processing {} problem windows ({} skipped)",
-        problem_windows.len(),
+        problem_window_count,
         windows_skipped
     );
 
@@ -88,7 +89,7 @@ pub async fn execute_stage1(
     }
 
     Ok(Stage1Result {
-        windows_processed: problem_windows.len(),
+        windows_processed: problem_window_count,
         windows_skipped,
         patches,
         validation_failures,

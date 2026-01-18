@@ -1,5 +1,5 @@
 use crate::models::{
-    ProblemType, ProblemZoneConfig, Token, TokenizedTranscript, Turn, Window, WindowConfig,
+    ProblemType, ProblemZoneConfig, TokenizedTranscript, Window, WindowConfig,
     WindowSet,
 };
 

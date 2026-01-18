@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::info;
 
 use crate::heuristics::micro_turns::rebuild_turns;
-use crate::models::{TokenizedTranscript, Window, WindowPatch, WindowSet};
+use crate::models::{TokenizedTranscript, WindowPatch, WindowSet};
 
 /// Configuration for Stage 2 reconciliation
 #[derive(Debug, Clone)]
@@ -115,13 +115,21 @@ pub fn execute_stage2(
 
         // Check if this is a stable span that should be protected
         if token.speaker_conf >= config.stable_span_confidence {
-            // Only override if multiple windows agree
-            let agreeing_windows: Vec<_> = token_candidates
-                .iter()
-                .filter(|c| c.speaker != token.speaker)
-                .collect();
+            // Only override if multiple windows agree ON THE SAME alternative speaker
+            // Count how many windows propose each alternative speaker
+            let mut alternative_speaker_counts: HashMap<u32, usize> = HashMap::new();
+            for c in token_candidates.iter() {
+                if c.speaker != token.speaker {
+                    *alternative_speaker_counts.entry(c.speaker).or_default() += 1;
+                }
+            }
 
-            if agreeing_windows.len() < config.min_windows_for_override {
+            // Check if any single alternative speaker has enough consensus
+            let has_consensus = alternative_speaker_counts
+                .values()
+                .any(|&count| count >= config.min_windows_for_override);
+
+            if !has_consensus {
                 continue;
             }
         }
@@ -271,5 +279,81 @@ mod tests {
         }];
 
         assert_eq!(weighted_vote(&candidates), 2);
+    }
+
+    #[test]
+    fn test_stable_span_requires_consensus() {
+        // Test that stable spans are only overridden when multiple windows
+        // agree on the SAME alternative speaker, not just any alternative
+
+        let config = Stage2Config {
+            min_windows_for_override: 2,
+            stable_span_confidence: 0.8,
+            ..Default::default()
+        };
+
+        // Candidates from 3 windows, each suggesting a different speaker
+        // This should NOT override a stable span because there's no consensus
+        let candidates_no_consensus = vec![
+            LabelCandidate {
+                speaker: 1,
+                window_id: "w_0".to_string(),
+                weight: 0.9,
+            },
+            LabelCandidate {
+                speaker: 2,
+                window_id: "w_1".to_string(),
+                weight: 0.9,
+            },
+            LabelCandidate {
+                speaker: 3,
+                window_id: "w_2".to_string(),
+                weight: 0.9,
+            },
+        ];
+
+        // Count alternatives (assuming current speaker is 0)
+        let current_speaker = 0u32;
+        let mut alt_counts: HashMap<u32, usize> = HashMap::new();
+        for c in &candidates_no_consensus {
+            if c.speaker != current_speaker {
+                *alt_counts.entry(c.speaker).or_default() += 1;
+            }
+        }
+        let has_consensus = alt_counts
+            .values()
+            .any(|&count| count >= config.min_windows_for_override);
+        assert!(!has_consensus, "Should NOT have consensus when all alternatives differ");
+
+        // Candidates where 2 windows agree on speaker 1
+        // This SHOULD allow override because there's consensus
+        let candidates_with_consensus = vec![
+            LabelCandidate {
+                speaker: 1,
+                window_id: "w_0".to_string(),
+                weight: 0.9,
+            },
+            LabelCandidate {
+                speaker: 1,
+                window_id: "w_1".to_string(),
+                weight: 0.9,
+            },
+            LabelCandidate {
+                speaker: 2,
+                window_id: "w_2".to_string(),
+                weight: 0.9,
+            },
+        ];
+
+        let mut alt_counts: HashMap<u32, usize> = HashMap::new();
+        for c in &candidates_with_consensus {
+            if c.speaker != current_speaker {
+                *alt_counts.entry(c.speaker).or_default() += 1;
+            }
+        }
+        let has_consensus = alt_counts
+            .values()
+            .any(|&count| count >= config.min_windows_for_override);
+        assert!(has_consensus, "Should have consensus when 2 windows agree on speaker 1");
     }
 }

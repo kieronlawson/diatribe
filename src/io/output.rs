@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::models::{Token, TokenizedTranscript, Turn};
+use crate::models::TokenizedTranscript;
 
 /// Machine-readable output format
 #[derive(Debug, Clone, Serialize)]

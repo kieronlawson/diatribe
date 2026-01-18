@@ -30,7 +30,7 @@ fn tokenize_deepgram_response(response: &DeepgramResponse) -> Result<TokenizedTr
         });
     }
 
-    let mut tokens = Vec::with_capacity(words.len());
+    let mut tokens: Vec<Token> = Vec::with_capacity(words.len());
     let mut turns = Vec::new();
     let mut speakers = std::collections::HashSet::new();
 

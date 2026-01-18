@@ -1,4 +1,4 @@
-use crate::models::{Token, TokenizedTranscript, Window};
+use crate::models::{TokenizedTranscript, Window};
 
 /// System prompt for the LLM (non-negotiable constraints)
 pub const SYSTEM_PROMPT: &str = r#"You are editing a diarized transcript. You MUST follow these rules:
