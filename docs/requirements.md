@@ -49,11 +49,21 @@ Because windows overlap, you'll get conflicting edits:
   - Maximum speaker switches per second (soft constraint)
   - Do not relabel tokens in "stable spans" (high conf, long runs) unless multiple windows agree
 
+### Optional: Speaker Identification
+
+After reconciliation, an optional speaker identification stage can map anonymous speaker IDs to participant names:
+
+- Requires a participant list (names with optional hints)
+- Uses a separate LLM call with tool use for structured output
+- Does not affect core speaker attribution logic
+- Returns confidence scores and evidence for each identification
+- Only applies identifications above a configurable confidence threshold
+
 ### Stage 3: Rendering (derived view)
 
 Produce two views:
-1. **Canonical machine transcript**: tokens with final speaker_id and timestamps
-2. **Human transcript**: turns with punctuation/casing and paragraphing (this can be a second LLM pass, but it must not alter words; only add punctuation/case and line breaks)
+1. **Canonical machine transcript**: tokens with final speaker_id and timestamps, optionally with speaker names and identification metadata
+2. **Human transcript**: turns with punctuation/casing and paragraphing, using participant names when available (this can be a second LLM pass, but it must not alter words; only add punctuation/case and line breaks)
 
 ## Prompt Design
 

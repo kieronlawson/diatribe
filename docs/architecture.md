@@ -3,14 +3,14 @@
 ## Pipeline Overview
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Stage 0       │    │   Stage 1       │    │   Stage 2       │    │   Stage 3       │
-│   Normalize     │───▶│   LLM Edit      │───▶│   Reconcile     │───▶│   Render        │
-│                 │    │                 │    │                 │    │                 │
-│ - Parse input   │    │ - Window tokens │    │ - Merge patches │    │ - Machine JSON  │
-│ - Detect zones  │    │ - Call Claude   │    │ - Weighted vote │    │ - Human text    │
-│ - Build windows │    │ - Validate      │    │ - Constraints   │    │                 │
-└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Stage 0       │    │   Stage 1       │    │   Stage 2       │    │   Speaker ID    │    │   Stage 3       │
+│   Normalize     │───▶│   LLM Edit      │───▶│   Reconcile     │───▶│   (Optional)    │───▶│   Render        │
+│                 │    │                 │    │                 │    │                 │    │                 │
+│ - Parse input   │    │ - Window tokens │    │ - Merge patches │    │ - Extract text  │    │ - Machine JSON  │
+│ - Detect zones  │    │ - Call Claude   │    │ - Weighted vote │    │ - Match names   │    │ - Human text    │
+│ - Build windows │    │ - Validate      │    │ - Constraints   │    │ - Confidence    │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
 ## Data Flow
@@ -77,11 +77,13 @@ WindowPatch {
 - `token.rs` - Internal token representation
 - `window.rs` - Processing window with anchors
 - `patch.rs` - LLM output patch types
+- `speaker_id.rs` - Speaker identification data structures
 
 ### `stages/`
 - `stage0_normalize.rs` - Parse, detect problem zones, build windows
 - `stage1_llm_edit.rs` - LLM relabeling orchestration
 - `stage2_reconcile.rs` - Merge overlapping window patches
+- `stage_speaker_id.rs` - Optional speaker identification stage
 - `stage3_render.rs` - Generate output formats
 
 ### `heuristics/`
@@ -92,6 +94,7 @@ WindowPatch {
 ### `llm/`
 - `client.rs` - Anthropic API client
 - `prompts.rs` - Prompt construction
+- `speaker_id_prompt.rs` - Speaker identification prompts
 - `validation.rs` - Patch validation
 
 ### `io/`
@@ -106,6 +109,16 @@ Windows are only processed by the LLM if they intersect "problem zones":
 2. **Short Turns**: Any turn <800ms
 3. **Overlap Adjacent**: Within 2s of detected overlap
 4. **Low Confidence**: Average speaker_confidence <0.6
+
+## Speaker Identification
+
+An optional post-reconciliation stage that maps anonymous speaker IDs to participant names:
+
+1. **Excerpt Extraction**: Collects representative text samples from each speaker's turns
+2. **LLM Matching**: Sends excerpts to Claude with the participant list for identification
+3. **Confidence Scoring**: Returns confidence scores (0.0-1.0) and supporting evidence for each match
+
+The speaker identification stage uses tool calling for structured output, ensuring reliable JSON responses. Identifications below the configured confidence threshold are excluded from the final output.
 
 ## Reconciliation Strategy
 
