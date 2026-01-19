@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
 use tracing::info;
 
 use crate::io::{HumanTranscript, MachineTranscript, TranscriptMetadata};
-use crate::models::TokenizedTranscript;
+use crate::models::{SpeakerIdentification, TokenizedTranscript};
 
 /// Configuration for Stage 3 rendering
 #[derive(Debug, Clone)]
@@ -45,6 +46,8 @@ pub fn execute_stage3(
     machine_output: Option<&Path>,
     human_output: Option<&Path>,
     config: &Stage3Config,
+    speaker_names: Option<&HashMap<u32, String>>,
+    speaker_identifications: Option<Vec<SpeakerIdentification>>,
 ) -> Result<Stage3Result> {
     let mut result = Stage3Result {
         machine_path: None,
@@ -55,7 +58,13 @@ pub fn execute_stage3(
     if config.generate_machine {
         if let Some(path) = machine_output {
             info!("Writing machine transcript to {:?}", path);
-            let machine = MachineTranscript::from_transcript(transcript, original_speakers, metadata);
+            let machine = MachineTranscript::from_transcript(
+                transcript,
+                original_speakers,
+                metadata,
+                speaker_names,
+                speaker_identifications,
+            );
             machine.write_json(path)?;
             result.machine_path = Some(path.to_path_buf());
         }
@@ -65,7 +74,11 @@ pub fn execute_stage3(
     if config.generate_human {
         if let Some(path) = human_output {
             info!("Writing human transcript to {:?}", path);
-            let human = HumanTranscript::new(transcript);
+            let human = if let Some(names) = speaker_names {
+                HumanTranscript::with_speaker_names(transcript, names)
+            } else {
+                HumanTranscript::new(transcript)
+            };
             human.write_file(path)?;
             result.human_path = Some(path.to_path_buf());
         }

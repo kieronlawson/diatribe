@@ -6,9 +6,10 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use diatribe::{
-    apply_heuristics, execute_stage1, execute_stage2, execute_stage3, normalize,
-    parse_deepgram_file, AnthropicClient, AnthropicConfig, HeuristicsConfig, ProblemZoneConfig,
-    Stage1Config, Stage2Config, Stage3Config, TranscriptMetadata, WindowConfig,
+    apply_heuristics, execute_speaker_id, execute_stage1, execute_stage2, execute_stage3,
+    normalize, parse_deepgram_file, parse_participants_file,
+    AnthropicClient, AnthropicConfig, HeuristicsConfig, Participant, ProblemZoneConfig,
+    SpeakerIdConfig, Stage1Config, Stage2Config, Stage3Config, TranscriptMetadata, WindowConfig,
 };
 
 #[derive(Parser)]
@@ -59,6 +60,18 @@ enum Commands {
         #[arg(long)]
         heuristics_only: bool,
 
+        /// Comma-separated list of participant names for speaker identification
+        #[arg(long, value_delimiter = ',')]
+        participants: Option<Vec<String>>,
+
+        /// JSON file with participant names and optional hints
+        #[arg(long)]
+        participants_file: Option<PathBuf>,
+
+        /// Minimum confidence threshold for speaker identification (0.0-1.0)
+        #[arg(long, default_value = "0.7")]
+        speaker_id_confidence: f64,
+
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
@@ -91,6 +104,9 @@ async fn main() -> Result<()> {
             window_stride_ms,
             min_turn_ms,
             heuristics_only,
+            participants,
+            participants_file,
+            speaker_id_confidence,
             verbose,
         } => {
             setup_logging(verbose);
@@ -104,6 +120,9 @@ async fn main() -> Result<()> {
                 window_stride_ms,
                 min_turn_ms,
                 heuristics_only,
+                participants,
+                participants_file,
+                speaker_id_confidence,
             )
             .await
         }
@@ -130,6 +149,9 @@ async fn process_transcript(
     window_stride_ms: u64,
     min_turn_ms: u64,
     heuristics_only: bool,
+    participants: Option<Vec<String>>,
+    participants_file: Option<PathBuf>,
+    speaker_id_confidence: f64,
 ) -> Result<()> {
     info!("Loading transcript from {:?}", input);
     let mut transcript =
@@ -238,6 +260,75 @@ async fn process_transcript(
         info!("Skipping LLM processing (heuristics sufficient)");
     }
 
+    // Parse participants for speaker identification
+    let parsed_participants: Option<Vec<Participant>> = if let Some(file) = participants_file {
+        Some(parse_participants_file(&file).context("Failed to parse participants file")?)
+    } else if let Some(names) = participants {
+        Some(
+            names
+                .iter()
+                .map(|n| Participant::new(n.trim()))
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    // Speaker Identification (optional, if participants provided)
+    let (speaker_names, speaker_identifications) = if let Some(ref parts) = parsed_participants {
+        if !heuristics_only {
+            info!("Running speaker identification...");
+            let api_config = AnthropicConfig::from_env()?;
+            let client = AnthropicClient::new(api_config);
+
+            let speaker_id_config = SpeakerIdConfig {
+                confidence_threshold: speaker_id_confidence,
+                ..Default::default()
+            };
+
+            let speaker_id_result =
+                execute_speaker_id(&client, &transcript, parts, &speaker_id_config).await?;
+
+            info!(
+                "Speaker identification complete: {} speakers identified",
+                speaker_id_result
+                    .identifications
+                    .iter()
+                    .filter(|id| id.identified_as.is_some())
+                    .count()
+            );
+            info!(
+                "API usage: {} input tokens, {} output tokens",
+                speaker_id_result.usage.input_tokens, speaker_id_result.usage.output_tokens
+            );
+
+            // Log identifications
+            for id in &speaker_id_result.identifications {
+                if let Some(ref name) = id.identified_as {
+                    info!(
+                        "  Speaker {} -> {} (confidence: {:.2})",
+                        id.speaker_id, name, id.confidence
+                    );
+                } else {
+                    info!(
+                        "  Speaker {} -> unidentified (confidence: {:.2})",
+                        id.speaker_id, id.confidence
+                    );
+                }
+            }
+
+            (
+                Some(speaker_id_result.display_names),
+                Some(speaker_id_result.identifications),
+            )
+        } else {
+            info!("Skipping speaker identification (--heuristics-only)");
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
     // Stage 3: Rendering
     info!("Stage 3: Rendering output...");
     let metadata = TranscriptMetadata {
@@ -261,6 +352,8 @@ async fn process_transcript(
         Some(&output),
         human_readable.as_deref(),
         &stage3_config,
+        speaker_names.as_ref(),
+        speaker_identifications,
     )?;
 
     info!("Output written to {:?}", stage3_result.machine_path);

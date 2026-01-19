@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::models::WindowPatch;
+use crate::llm::speaker_id_prompt::get_speaker_id_tool_schema;
+use crate::models::{SpeakerIdentification, WindowPatch};
 
 /// Configuration for the Anthropic API client
 #[derive(Debug, Clone)]
@@ -221,6 +222,73 @@ impl AnthropicClient {
 
         anyhow::bail!("No tool_use response found")
     }
+
+    /// Send a speaker identification request using tool use
+    pub async fn send_speaker_id_request(
+        &self,
+        system: &str,
+        user: &str,
+    ) -> Result<(Vec<SpeakerIdentification>, Usage)> {
+        let tool = Tool {
+            name: "submit_speaker_identifications".to_string(),
+            description: "Submit speaker identifications with confidence scores and evidence"
+                .to_string(),
+            input_schema: get_speaker_id_tool_schema(),
+        };
+
+        let request = AnthropicToolRequest {
+            model: self.config.model.clone(),
+            max_tokens: self.config.max_tokens,
+            temperature: Some(self.config.temperature),
+            system: Some(system.to_string()),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: user.to_string(),
+            }],
+            tools: vec![tool],
+            tool_choice: Some(ToolChoice {
+                choice_type: "tool".to_string(),
+                name: "submit_speaker_identifications".to_string(),
+            }),
+        };
+
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to Anthropic API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+        }
+
+        let response: AnthropicResponse = response
+            .json()
+            .await
+            .context("Failed to parse Anthropic API response")?;
+
+        // Find the tool_use content block
+        for content in &response.content {
+            if content.content_type == "tool_use"
+                && content.name.as_deref() == Some("submit_speaker_identifications")
+            {
+                if let Some(input) = &content.input {
+                    let result: SpeakerIdToolResult = serde_json::from_value(input.clone())
+                        .context("Failed to parse tool input as SpeakerIdToolResult")?;
+                    return Ok((result.identifications, response.usage));
+                }
+            }
+        }
+
+        anyhow::bail!("No tool_use response found for speaker identification")
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -299,4 +367,10 @@ struct ContentBlock {
     name: Option<String>,
     #[serde(default)]
     input: Option<serde_json::Value>,
+}
+
+/// Internal struct for parsing speaker identification tool response
+#[derive(Debug, Deserialize)]
+struct SpeakerIdToolResult {
+    identifications: Vec<SpeakerIdentification>,
 }

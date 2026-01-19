@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::models::TokenizedTranscript;
+use crate::models::{SpeakerIdentification, TokenizedTranscript};
 
 /// Machine-readable output format
 #[derive(Debug, Clone, Serialize)]
@@ -17,6 +18,9 @@ pub struct MachineTranscript {
     pub speakers: Vec<u32>,
     /// Metadata about the processing
     pub metadata: TranscriptMetadata,
+    /// Speaker identification results (if participants were provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_identifications: Option<Vec<SpeakerIdentification>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +39,8 @@ pub struct MachineToken {
 pub struct MachineTurn {
     pub turn_id: String,
     pub speaker: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_name: Option<String>,
     pub start_ms: u64,
     pub end_ms: u64,
     pub word_count: usize,
@@ -55,6 +61,8 @@ impl MachineTranscript {
         transcript: &TokenizedTranscript,
         original_speakers: &[u32],
         metadata: TranscriptMetadata,
+        speaker_names: Option<&HashMap<u32, String>>,
+        speaker_identifications: Option<Vec<SpeakerIdentification>>,
     ) -> Self {
         let tokens: Vec<MachineToken> = transcript
             .tokens
@@ -78,6 +86,7 @@ impl MachineTranscript {
             .map(|t| MachineTurn {
                 turn_id: t.turn_id.clone(),
                 speaker: t.speaker,
+                speaker_name: speaker_names.and_then(|names| names.get(&t.speaker).cloned()),
                 start_ms: t.start_ms,
                 end_ms: t.end_ms,
                 word_count: t.token_indices.len(),
@@ -89,6 +98,7 @@ impl MachineTranscript {
             turns,
             speakers: transcript.speakers.clone(),
             metadata,
+            speaker_identifications,
         }
     }
 
@@ -104,11 +114,26 @@ impl MachineTranscript {
 /// Human-readable transcript format
 pub struct HumanTranscript<'a> {
     transcript: &'a TokenizedTranscript,
+    speaker_names: Option<&'a HashMap<u32, String>>,
 }
 
 impl<'a> HumanTranscript<'a> {
     pub fn new(transcript: &'a TokenizedTranscript) -> Self {
-        Self { transcript }
+        Self {
+            transcript,
+            speaker_names: None,
+        }
+    }
+
+    /// Create with speaker name mappings
+    pub fn with_speaker_names(
+        transcript: &'a TokenizedTranscript,
+        speaker_names: &'a HashMap<u32, String>,
+    ) -> Self {
+        Self {
+            transcript,
+            speaker_names: Some(speaker_names),
+        }
     }
 
     /// Format the transcript as human-readable text
@@ -118,7 +143,12 @@ impl<'a> HumanTranscript<'a> {
         for turn in &self.transcript.turns {
             // Format speaker header with timestamp
             let start_time = format_timestamp(turn.start_ms);
-            output.push_str(&format!("[{}] Speaker {}:\n", start_time, turn.speaker));
+            let speaker_label = self
+                .speaker_names
+                .and_then(|names| names.get(&turn.speaker))
+                .map(|name| name.clone())
+                .unwrap_or_else(|| format!("Speaker {}", turn.speaker));
+            output.push_str(&format!("[{}] {}:\n", start_time, speaker_label));
 
             // Collect words for this turn, preferring punctuated words when available
             let words: Vec<&str> = turn
