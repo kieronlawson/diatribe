@@ -1,6 +1,11 @@
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::llm::speaker_id_prompt::get_speaker_id_tool_schema;
 use crate::models::{SpeakerIdentification, WindowPatch};
@@ -43,22 +48,72 @@ impl AnthropicConfig {
     }
 }
 
+/// Log entry for API request/response logging
+#[derive(Debug, Serialize)]
+struct LogEntry {
+    timestamp: String,
+    method: String,
+    duration_ms: u64,
+    request: serde_json::Value,
+    response: Option<serde_json::Value>,
+    status_code: Option<u16>,
+    error: Option<String>,
+}
+
 /// Anthropic API client
 pub struct AnthropicClient {
     client: Client,
     config: AnthropicConfig,
+    log_dir: Option<PathBuf>,
+    log_sequence: AtomicUsize,
 }
 
 impl AnthropicClient {
-    pub fn new(config: AnthropicConfig) -> Self {
+    pub fn new(config: AnthropicConfig, log_dir: Option<PathBuf>) -> Self {
+        // Create log directory if specified and doesn't exist
+        if let Some(ref dir) = log_dir {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                warn!("Failed to create log directory {:?}: {}", dir, e);
+            }
+        }
+
         Self {
             client: Client::new(),
             config,
+            log_dir,
+            log_sequence: AtomicUsize::new(0),
+        }
+    }
+
+    /// Write a log entry to a file
+    fn write_log_entry(&self, method: &str, entry: &LogEntry) {
+        let Some(ref dir) = self.log_dir else {
+            return;
+        };
+
+        let seq = self.log_sequence.fetch_add(1, Ordering::SeqCst);
+        // Use timestamp with underscores instead of colons for filename compatibility
+        let timestamp = entry.timestamp.replace(':', "-").replace('.', "-");
+        let filename = format!("{}_{:03}_{}.json", timestamp, seq, method);
+        let path = dir.join(&filename);
+
+        match serde_json::to_string_pretty(entry) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    warn!("Failed to write log file {:?}: {}", path, e);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize log entry: {}", e);
+            }
         }
     }
 
     /// Send a message to Claude and get a response
     pub async fn send_message(&self, system: &str, user: &str) -> Result<String> {
+        let start = Instant::now();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
         let request = AnthropicRequest {
             model: self.config.model.clone(),
             max_tokens: self.config.max_tokens,
@@ -69,6 +124,8 @@ impl AnthropicClient {
                 content: user.to_string(),
             }],
         };
+
+        let request_json = serde_json::to_value(&request).unwrap_or_default();
 
         let response = self
             .client
@@ -81,15 +138,42 @@ impl AnthropicClient {
             .await
             .context("Failed to send request to Anthropic API")?;
 
+        let status_code = response.status().as_u16();
+        let duration_ms = start.elapsed().as_millis() as u64;
+
         if !response.status().is_success() {
-            let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+            let error_msg = format!("Anthropic API error: {} - {}", status_code, body);
+
+            self.write_log_entry("send_message", &LogEntry {
+                timestamp,
+                method: "send_message".to_string(),
+                duration_ms,
+                request: request_json,
+                response: None,
+                status_code: Some(status_code),
+                error: Some(error_msg.clone()),
+            });
+
+            anyhow::bail!(error_msg);
         }
 
-        let response: AnthropicResponse = response
-            .json()
-            .await
+        let response_bytes = response.bytes().await
+            .context("Failed to read response bytes")?;
+        let response_json: serde_json::Value = serde_json::from_slice(&response_bytes)
+            .unwrap_or_default();
+
+        self.write_log_entry("send_message", &LogEntry {
+            timestamp,
+            method: "send_message".to_string(),
+            duration_ms,
+            request: request_json,
+            response: Some(response_json.clone()),
+            status_code: Some(status_code),
+            error: None,
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(response_json)
             .context("Failed to parse Anthropic API response")?;
 
         // Extract text from the first content block
@@ -170,6 +254,9 @@ impl AnthropicClient {
             }),
         };
 
+        let start = Instant::now();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
         let request = AnthropicToolRequest {
             model: self.config.model.clone(),
             max_tokens: self.config.max_tokens,
@@ -186,6 +273,8 @@ impl AnthropicClient {
             }),
         };
 
+        let request_json = serde_json::to_value(&request).unwrap_or_default();
+
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
@@ -197,15 +286,42 @@ impl AnthropicClient {
             .await
             .context("Failed to send request to Anthropic API")?;
 
+        let status_code = response.status().as_u16();
+        let duration_ms = start.elapsed().as_millis() as u64;
+
         if !response.status().is_success() {
-            let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+            let error_msg = format!("Anthropic API error: {} - {}", status_code, body);
+
+            self.write_log_entry("send_with_tool", &LogEntry {
+                timestamp,
+                method: "send_with_tool".to_string(),
+                duration_ms,
+                request: request_json,
+                response: None,
+                status_code: Some(status_code),
+                error: Some(error_msg.clone()),
+            });
+
+            anyhow::bail!(error_msg);
         }
 
-        let response: AnthropicResponse = response
-            .json()
-            .await
+        let response_bytes = response.bytes().await
+            .context("Failed to read response bytes")?;
+        let response_json: serde_json::Value = serde_json::from_slice(&response_bytes)
+            .unwrap_or_default();
+
+        self.write_log_entry("send_with_tool", &LogEntry {
+            timestamp,
+            method: "send_with_tool".to_string(),
+            duration_ms,
+            request: request_json,
+            response: Some(response_json.clone()),
+            status_code: Some(status_code),
+            error: None,
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(response_json)
             .context("Failed to parse Anthropic API response")?;
 
         // Find the tool_use content block
@@ -229,6 +345,9 @@ impl AnthropicClient {
         system: &str,
         user: &str,
     ) -> Result<(Vec<SpeakerIdentification>, Usage)> {
+        let start = Instant::now();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
         let tool = Tool {
             name: "submit_speaker_identifications".to_string(),
             description: "Submit speaker identifications with confidence scores and evidence"
@@ -252,6 +371,8 @@ impl AnthropicClient {
             }),
         };
 
+        let request_json = serde_json::to_value(&request).unwrap_or_default();
+
         let response = self
             .client
             .post("https://api.anthropic.com/v1/messages")
@@ -263,15 +384,42 @@ impl AnthropicClient {
             .await
             .context("Failed to send request to Anthropic API")?;
 
+        let status_code = response.status().as_u16();
+        let duration_ms = start.elapsed().as_millis() as u64;
+
         if !response.status().is_success() {
-            let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("Anthropic API error: {} - {}", status, body);
+            let error_msg = format!("Anthropic API error: {} - {}", status_code, body);
+
+            self.write_log_entry("send_speaker_id_request", &LogEntry {
+                timestamp,
+                method: "send_speaker_id_request".to_string(),
+                duration_ms,
+                request: request_json,
+                response: None,
+                status_code: Some(status_code),
+                error: Some(error_msg.clone()),
+            });
+
+            anyhow::bail!(error_msg);
         }
 
-        let response: AnthropicResponse = response
-            .json()
-            .await
+        let response_bytes = response.bytes().await
+            .context("Failed to read response bytes")?;
+        let response_json: serde_json::Value = serde_json::from_slice(&response_bytes)
+            .unwrap_or_default();
+
+        self.write_log_entry("send_speaker_id_request", &LogEntry {
+            timestamp,
+            method: "send_speaker_id_request".to_string(),
+            duration_ms,
+            request: request_json,
+            response: Some(response_json.clone()),
+            status_code: Some(status_code),
+            error: None,
+        });
+
+        let response: AnthropicResponse = serde_json::from_value(response_json)
             .context("Failed to parse Anthropic API response")?;
 
         // Find the tool_use content block

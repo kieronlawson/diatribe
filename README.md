@@ -76,6 +76,19 @@ diatribe process \
   --verbose
 ```
 
+### Debug Logging
+
+Log raw API request/response JSON for debugging:
+
+```bash
+diatribe process \
+  --input transcript.json \
+  --output corrected.json \
+  --log-dir ./api-logs
+```
+
+Creates one JSON file per API call containing timestamp, duration, request, response, and status. Files are named with the format `{timestamp}_{sequence}_{method}.json`.
+
 ### Analyze a transcript
 
 ```bash

@@ -75,6 +75,10 @@ enum Commands {
         /// Verbose output
         #[arg(short, long)]
         verbose: bool,
+
+        /// Directory to log raw LLM request/response JSON (optional)
+        #[arg(long)]
+        log_dir: Option<PathBuf>,
     },
 
     /// Analyze a transcript without making changes
@@ -108,6 +112,7 @@ async fn main() -> Result<()> {
             participants_file,
             speaker_id_confidence,
             verbose,
+            log_dir,
         } => {
             setup_logging(verbose);
             process_transcript(
@@ -123,6 +128,7 @@ async fn main() -> Result<()> {
                 participants,
                 participants_file,
                 speaker_id_confidence,
+                log_dir,
             )
             .await
         }
@@ -152,6 +158,7 @@ async fn process_transcript(
     participants: Option<Vec<String>>,
     participants_file: Option<PathBuf>,
     speaker_id_confidence: f64,
+    log_dir: Option<PathBuf>,
 ) -> Result<()> {
     info!("Loading transcript from {:?}", input);
     let mut transcript =
@@ -204,7 +211,7 @@ async fn process_transcript(
         info!("Stage 1: LLM relabeling...");
 
         let api_config = AnthropicConfig::from_env()?;
-        let client = AnthropicClient::new(api_config);
+        let client = AnthropicClient::new(api_config, log_dir.clone());
 
         let stage1_config = Stage1Config {
             edit_budget_percent: edit_budget,
@@ -279,7 +286,7 @@ async fn process_transcript(
         if !heuristics_only {
             info!("Running speaker identification...");
             let api_config = AnthropicConfig::from_env()?;
-            let client = AnthropicClient::new(api_config);
+            let client = AnthropicClient::new(api_config, log_dir.clone());
 
             let speaker_id_config = SpeakerIdConfig {
                 confidence_threshold: speaker_id_confidence,
